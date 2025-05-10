@@ -17,6 +17,7 @@ import {
   MIDSCENE_DEBUG_AI_RESPONSE,
   MIDSCENE_LANGSMITH_DEBUG,
   MIDSCENE_MODEL_NAME,
+  MIDSCENE_MODEL_MINI_NAME,
   MIDSCENE_OPENAI_HTTP_PROXY,
   MIDSCENE_OPENAI_INIT_CONFIG_JSON,
   MIDSCENE_OPENAI_SOCKS_PROXY,
@@ -92,8 +93,17 @@ function initDebugConfig() {
 
 // default model
 const defaultModel = 'gpt-4o';
-export function getModelName() {
+export function getModelName(AIActionTypeValue?: AIActionType) {
   let modelName = defaultModel;
+  const miniName = getAIConfig(MIDSCENE_MODEL_MINI_NAME);
+  if (
+    miniName &&
+    (AIActionTypeValue === AIActionType.ASSERT ||
+      AIActionTypeValue === AIActionType.EXTRACT_DATA)
+  ) {
+    modelName = miniName;
+    return modelName;
+  }
   const nameInConfig = getAIConfig(MIDSCENE_MODEL_NAME);
   if (nameInConfig) {
     modelName = nameInConfig;
@@ -248,7 +258,7 @@ export async function call(
   const debugProfileDetail = getDebug('ai:profile:detail');
 
   const startTime = Date.now();
-  const model = getModelName();
+  const model = getModelName(AIActionTypeValue);
   let content: string | undefined;
   let usage: OpenAI.CompletionUsage | undefined;
   const commonConfig = {
@@ -348,7 +358,7 @@ export async function callToGetJSONObject<T>(
     | OpenAI.ResponseFormatJSONObject
     | undefined;
 
-  const model = getModelName();
+  const model = getModelName(AIActionTypeValue);
 
   if (model.includes('gpt-4')) {
     switch (AIActionTypeValue) {

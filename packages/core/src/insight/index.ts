@@ -22,6 +22,7 @@ import {
   MIDSCENE_FORCE_DEEP_THINK,
   getAIConfigInBoolean,
   vlLocateMode,
+  resetGlobalConfig,
 } from '@midscene/shared/env';
 import { getDebug } from '@midscene/shared/logger';
 import { assert } from '@midscene/shared/utils';
@@ -94,129 +95,192 @@ export default class Insight<
       debug('globalDeepThinkSwitch', globalDeepThinkSwitch);
     }
     let searchAreaPrompt;
-    if (query.deepThink || globalDeepThinkSwitch) {
+    if (query.deepThink || globalDeepThinkSwitch || query.vlLocateMode) {
       searchAreaPrompt = query.prompt;
     }
-
-    if (searchAreaPrompt && !vlLocateMode()) {
-      console.warn(
-        'The "deepThink" feature is not supported with multimodal LLM. Please config VL model for Midscene. https://midscenejs.com/choose-a-model',
-      );
+    // 如果当前vlLocateMode为false，则使用普通模式，searchAreaPrompt设为undefined
+    if (!query.vlLocateMode) {
       searchAreaPrompt = undefined;
     }
 
-    const context = await this.contextRetrieverFn('locate');
-
-    let searchArea: Rect | undefined = undefined;
-    let searchAreaRawResponse: string | undefined = undefined;
-    let searchAreaUsage: AIUsageInfo | undefined = undefined;
-    let searchAreaResponse:
-      | Awaited<ReturnType<typeof AiLocateSection>>
-      | undefined = undefined;
-    if (searchAreaPrompt) {
-      searchAreaResponse = await AiLocateSection({
-        context,
-        sectionDescription: searchAreaPrompt,
-      });
-      assert(
-        searchAreaResponse.rect,
-        `cannot find search area for "${searchAreaPrompt}"${
-          searchAreaResponse.error ? `: ${searchAreaResponse.error}` : ''
-        }`,
-      );
-      searchAreaRawResponse = searchAreaResponse.rawResponse;
-      searchAreaUsage = searchAreaResponse.usage;
-      searchArea = searchAreaResponse.rect;
+    // 新增逻辑：如果 searchAreaPrompt 存在且 vlLocateMode 不开启，且设置了VL_OPENAI相关环境变量，则临时切换到Qwen VL模式
+    let needRestoreEnv = false;
+    let originalEnv: Record<string, string | undefined> = {};
+    if (
+      searchAreaPrompt &&
+      !vlLocateMode() &&
+      process.env.VL_OPENAI_API_KEY &&
+      process.env.VL_OPENAI_BASE_URL &&
+      process.env.VL_MIDSCENE_MODEL_NAME
+    ) {
+      // 记录原有环境变量
+      originalEnv = {
+        MIDSCENE_USE_QWEN_VL: process.env.MIDSCENE_USE_QWEN_VL,
+        OPENAI_API_KEY: process.env.OPENAI_API_KEY,
+        OPENAI_BASE_URL: process.env.OPENAI_BASE_URL,
+        MIDSCENE_MODEL_NAME: process.env.MIDSCENE_MODEL_NAME,
+        MIDSCENE_MODEL_MINI_NAME: process.env.MIDSCENE_MODEL_MINI_NAME, 
+      };
+      // 临时切换到Qwen VL模式
+      process.env.MIDSCENE_USE_QWEN_VL = '1';
+      process.env.OPENAI_API_KEY = process.env.VL_OPENAI_API_KEY;
+      process.env.OPENAI_BASE_URL = process.env.VL_OPENAI_BASE_URL;
+      process.env.MIDSCENE_MODEL_NAME = process.env.VL_MIDSCENE_MODEL_NAME;
+      delete process.env.MIDSCENE_MODEL_MINI_NAME;
+      needRestoreEnv = true;
+      resetGlobalConfig();
     }
 
-    const startTime = Date.now();
-    const { parseResult, rect, elementById, rawResponse, usage } =
-      await AiLocateElement({
-        callAI: callAI || this.aiVendorFn,
-        context,
-        targetElementDescription: queryPrompt,
-        quickAnswer: opt?.quickAnswer,
-        searchConfig: searchAreaResponse,
-      });
-
-    const timeCost = Date.now() - startTime;
-    const taskInfo: InsightTaskInfo = {
-      ...(this.taskInfo ? this.taskInfo : {}),
-      durationMs: timeCost,
-      rawResponse: JSON.stringify(rawResponse),
-      formatResponse: JSON.stringify(parseResult),
-      usage,
-      searchArea,
-      searchAreaRawResponse,
-      searchAreaUsage,
-    };
-
-    let errorLog: string | undefined;
-    if (parseResult.errors?.length) {
-      errorLog = `AI model failed to locate: \n${parseResult.errors.join('\n')}`;
-    }
-
-    const dumpData: PartialInsightDumpFromSDK = {
-      type: 'locate',
-      userQuery: {
-        element: queryPrompt,
-      },
-      quickAnswer: opt?.quickAnswer,
-      matchedElement: [],
-      matchedRect: rect,
-      data: null,
-      taskInfo,
-      deepThink: !!searchArea,
-      error: errorLog,
-    };
-
-    const elements: BaseElement[] = [];
-    (parseResult.elements || []).forEach((item) => {
-      if ('id' in item) {
-        const element = elementById(item.id);
-
-        if (!element) {
-          console.warn(
-            `locate: cannot find element id=${item.id}. Maybe an unstable response from AI model`,
-          );
-          return;
-        }
-        elements.push(element);
+    try {
+      if (searchAreaPrompt && !vlLocateMode()) {
+        console.warn(
+          'The "deepThink" feature is not supported with multimodal LLM. Please config VL model for Midscene. https://midscenejs.com/choose-a-model',
+        );
+        searchAreaPrompt = undefined;
       }
-    });
 
-    emitInsightDump(
-      {
-        ...dumpData,
-        matchedElement: elements,
-      },
-      dumpSubscriber,
-    );
+      const context = await this.contextRetrieverFn('locate');
 
-    if (errorLog) {
-      throw new Error(errorLog);
-    }
+      let searchArea: Rect | undefined = undefined;
+      let searchAreaRawResponse: string | undefined = undefined;
+      let searchAreaUsage: AIUsageInfo | undefined = undefined;
+      let searchAreaResponse:
+        | Awaited<ReturnType<typeof AiLocateSection>>
+        | undefined = undefined;
+      if (searchAreaPrompt) {
+        searchAreaResponse = await AiLocateSection({
+          context,
+          sectionDescription: searchAreaPrompt,
+        });
+        assert(
+          searchAreaResponse.rect,
+          `cannot find search area for "${searchAreaPrompt}"${
+            searchAreaResponse.error ? `: ${searchAreaResponse.error}` : ''
+          }`,
+        );
+        searchAreaRawResponse = searchAreaResponse.rawResponse;
+        searchAreaUsage = searchAreaResponse.usage;
+        searchArea = searchAreaResponse.rect;
+      }
 
-    assert(
-      elements.length <= 1,
-      `locate: multiple elements found, length = ${elements.length}`,
-    );
+      const startTime = Date.now();
+      const { parseResult, rect, elementById, rawResponse, usage } =
+        await AiLocateElement({
+          callAI: callAI || this.aiVendorFn,
+          context,
+          targetElementDescription: queryPrompt,
+          quickAnswer: opt?.quickAnswer,
+          searchConfig: searchAreaResponse,
+        });
 
-    if (elements.length === 1) {
-      return {
-        element: {
-          id: elements[0]!.id,
-          indexId: elements[0]!.indexId,
-          center: elements[0]!.center,
-          rect: elements[0]!.rect,
+      const timeCost = Date.now() - startTime;
+      const taskInfo: InsightTaskInfo = {
+        ...(this.taskInfo ? this.taskInfo : {}),
+        durationMs: timeCost,
+        rawResponse: JSON.stringify(rawResponse),
+        formatResponse: JSON.stringify(parseResult),
+        usage,
+        searchArea,
+        searchAreaRawResponse,
+        searchAreaUsage,
+      };
+
+      let errorLog: string | undefined;
+      if (parseResult.errors?.length) {
+        errorLog = `AI model failed to locate: \n${parseResult.errors.join('\n')}`;
+      }
+
+      const dumpData: PartialInsightDumpFromSDK = {
+        type: 'locate',
+        userQuery: {
+          element: queryPrompt,
         },
+        quickAnswer: opt?.quickAnswer,
+        matchedElement: [],
+        matchedRect: rect,
+        data: null,
+        taskInfo,
+        deepThink: !!searchArea,
+        error: errorLog,
+      };
+
+      const elements: BaseElement[] = [];
+      (parseResult.elements || []).forEach((item) => {
+        if ('id' in item) {
+          const element = elementById(item.id);
+
+          if (!element) {
+            console.warn(
+              `locate: cannot find element id=${item.id}. Maybe an unstable response from AI model`,
+            );
+            return;
+          }
+          elements.push(element);
+        }
+      });
+
+      emitInsightDump(
+        {
+          ...dumpData,
+          matchedElement: elements,
+        },
+        dumpSubscriber,
+      );
+
+      if (errorLog) {
+        throw new Error(errorLog);
+      }
+
+      assert(
+        elements.length <= 1,
+        `locate: multiple elements found, length = ${elements.length}`,
+      );
+
+      if (elements.length === 1) {
+        return {
+          element: {
+            id: elements[0]!.id,
+            indexId: elements[0]!.indexId,
+            center: elements[0]!.center,
+            rect: elements[0]!.rect,
+          },
+          rect,
+        };
+      }
+      return {
+        element: null,
         rect,
       };
+    } finally {
+      if (needRestoreEnv) {
+        if (originalEnv.MIDSCENE_USE_QWEN_VL !== undefined) {
+          process.env.MIDSCENE_USE_QWEN_VL = originalEnv.MIDSCENE_USE_QWEN_VL;
+        } else {
+          delete process.env.MIDSCENE_USE_QWEN_VL;
+        }
+        if (originalEnv.OPENAI_API_KEY !== undefined) {
+          process.env.OPENAI_API_KEY = originalEnv.OPENAI_API_KEY;
+        } else {
+          delete process.env.OPENAI_API_KEY;
+        }
+        if (originalEnv.OPENAI_BASE_URL !== undefined) {
+          process.env.OPENAI_BASE_URL = originalEnv.OPENAI_BASE_URL;
+        } else {
+          delete process.env.OPENAI_BASE_URL;
+        }
+        if (originalEnv.MIDSCENE_MODEL_NAME !== undefined) {
+          process.env.MIDSCENE_MODEL_NAME = originalEnv.MIDSCENE_MODEL_NAME;
+        } else {
+          delete process.env.MIDSCENE_MODEL_NAME;
+        }
+        if (originalEnv.MIDSCENE_MODEL_MINI_NAME !== undefined) {
+          process.env.MIDSCENE_MODEL_MINI_NAME = originalEnv.MIDSCENE_MODEL_MINI_NAME;
+        } else {
+          delete process.env.MIDSCENE_MODEL_MINI_NAME;
+        }
+        resetGlobalConfig();
+      }
     }
-    return {
-      element: null,
-      rect,
-    };
   }
 
   async extract<T = any>(input: string): Promise<T>;

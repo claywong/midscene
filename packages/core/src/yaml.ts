@@ -3,6 +3,7 @@ import type { PlanningActionParamScroll } from './types';
 export interface LocateOption {
   prompt?: string;
   deepThink?: boolean; // only available in vl model
+  vlLocateMode?: boolean; // 临时切换到Qwen VL模式
 }
 
 export interface DetailedLocateParam extends LocateOption {

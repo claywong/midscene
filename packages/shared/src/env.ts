@@ -50,6 +50,10 @@ export const MIDSCENE_RUN_DIR = 'MIDSCENE_RUN_DIR';
 // @deprecated
 export const OPENAI_USE_AZURE = 'OPENAI_USE_AZURE';
 
+export const resetGlobalConfig = () => {
+  globalConfig = null;
+};
+
 export const allConfigFromEnv = () => {
   return {
     [MIDSCENE_OPENAI_INIT_CONFIG_JSON]:

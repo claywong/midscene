@@ -99,7 +99,7 @@ export function getModelName(AIActionTypeValue?: AIActionType) {
   if (
     miniName &&
     (AIActionTypeValue === AIActionType.ASSERT ||
-      AIActionTypeValue === AIActionType.EXTRACT_DATA)
+      AIActionTypeValue === AIActionType.EXTRACT_DATA) && !getAIConfig(MIDSCENE_USE_QWEN_VL)
   ) {
     modelName = miniName;
     return modelName;
